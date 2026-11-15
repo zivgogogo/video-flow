@@ -46,7 +46,7 @@ const emit = defineEmits<{ sessionExpired: [] }>();
 const capabilities = computed(() => [
   { key: "providers", label: translate("供应商来源"), description: translate("文本与媒体供应商来源。") },
   { key: "plugins", label: translate("插件市场"), description: translate("插件目录与市场数据。") },
-  { key: "community", label: translate("社区内容"), description: translate("作品、广告与赞助等社区内容。") },
+  { key: "community", label: translate("社区内容"), description: translate("作品与赞助等社区内容。") },
 ] satisfies { key: keyof SourceMapping; label: string; description: string }[]);
 const mappings = ref<SourceMapping | null>(null);
 const savedMappings = ref<SourceMapping | null>(null);

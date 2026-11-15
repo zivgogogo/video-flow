@@ -2,7 +2,7 @@ import { z } from "zod";
 import { t, translateMessage } from "@/lib/i18n";
 import type {
   AuthenticatedOptions, Captcha, Channel, CreateSubAccountParams, ExploreDetail, ExplorePage, ExploreParams, ExploreProcess, ExploreProject,
-  ExploreSubmission, ExploreUploadSignature, ExploreUploadSignatureParams, ForgotPasswordParams, HomeAdvertisement, HomeAdvertisements, Login, LoginParams, ModelData, ModelDataParams, Plugin, PluginExistence, PluginIdentity, PluginsParams, PluginType, PluginUploadSignature, PluginUploadSignatureParams, PointsConsumption,
+  ExploreSubmission, ExploreUploadSignature, ExploreUploadSignatureParams, ForgotPasswordParams, Login, LoginParams, ModelData, ModelDataParams, Plugin, PluginExistence, PluginIdentity, PluginsParams, PluginType, PluginUploadSignature, PluginUploadSignatureParams, PointsConsumption,
   PointsConsumptionParams, PreviewData, ProviderSources, RegisterParams, RequestOptions, SmsParams, Sponsor, SubAccountsPage, SubAccountsParams, TaskRecordsPage, TaskRecordsParams,
   UpdatePluginParams, UploadExploreProjectParams, UploadPluginParams, UsageStatistics, UsageStatisticsParams, WalletActivity, WalletBonusBatchesPage, WalletBonusBatchesParams, WalletOrdersPage, WalletOrdersParams, WalletPayment, WalletPaymentParams, WalletPaymentStatus, WalletPlan, WalletPresentation,
 } from "./types";
@@ -173,20 +173,7 @@ function validateExploreProject(project: ExploreProject) {
     || (project.author.avatarUrl !== undefined && !isExploreUrl(project.author.avatarUrl, true))) fail("探索项目响应格式不正确", 502);
 }
 
-const advertisementSettingsPanels = ["account", "general", "languageModel", "mediaModel", "pluginMarket", "mcp", "network", "deviceLink", "personalization", "developer", "multiTenant", "about"];
-const advertisementColor = z.string().regex(/^(?:|#[\da-f]{3}|#[\da-f]{6}|#[\da-f]{8})$/i);
-const homeAdvertisement = z.object({
-  title: z.string().trim().min(1).max(120), content: z.string().max(500), imageUrl: z.string().refine(value => isExploreUrl(value, true)), buttonText: z.string().max(40),
-  actionType: z.enum(["web", "path", "settings"]), actionTarget: z.string().min(1).max(2048), endsAt: taskTimestamp.refine(value => value > 0).nullable(), updatedAt: taskTimestamp,
-  appearance: z.object({
-    mode: z.enum(["text", "image"]), backgroundColor: advertisementColor, backgroundEndColor: advertisementColor.optional(), textColor: advertisementColor,
-    buttonColor: advertisementColor, buttonTextColor: advertisementColor,
-  }).strict().optional(),
-}).refine(advertisement => {
-  if (advertisement.actionType === "web") return isExploreUrl(advertisement.actionTarget);
-  if (advertisement.actionType === "path") return /^\/(?!\/)[^\\\x00-\x1f\x7f]*$/.test(advertisement.actionTarget);
-  return advertisementSettingsPanels.includes(advertisement.actionTarget);
-});
+const tagColor = z.string().regex(/^(?:|#[\da-f]{3}|#[\da-f]{6}|#[\da-f]{8})$/i);
 
 export class Toonflow implements Channel {
   private async request<T>(params: {
@@ -550,7 +537,7 @@ export class Toonflow implements Channel {
         || (item.version !== undefined && typeof item.version !== "string")
         || [item.supplier, item.desc, item.link, item.fileName, item.rejectReason].some(value => value != null && typeof value !== "string")
         || [item.demoVideoUrl, item.coverUrl].some(value => value != null && !isExploreUrl(value, true))
-        || (item.tags != null && !z.array(z.object({ text: z.string(), color: advertisementColor })).safeParse(item.tags).success)
+        || (item.tags != null && !z.array(z.object({ text: z.string(), color: tagColor })).safeParse(item.tags).success)
         || (item.isCollected != null && typeof item.isCollected !== "boolean")
         || (item.state === 1 && (typeof item.link !== "string" || !item.link.trim()
           || typeof item.fileName !== "string" || !item.fileName.trim())))) fail("插件市场列表格式不正确", 502);
@@ -829,33 +816,5 @@ export class Toonflow implements Channel {
     });
     if (!data || !Number.isSafeInteger(data.id) || data.id < 1 || data.state !== 0) fail("作品提交响应格式不正确", 502);
     return data;
-  }
-
-  async getAdvertisements(options?: RequestOptions): Promise<HomeAdvertisements> {
-    const data = await this.request<{ banner: unknown; banners?: unknown; bannerMode?: unknown; bannerInterval?: unknown; sidebar: unknown }>({
-      method: "POST", path: "/web/toonflow/home/getAdvertisements", signal: options?.signal,
-    });
-    if (!data || typeof data !== "object" || Array.isArray(data)) fail("首页广告响应格式不正确", 502);
-    const now = Date.now();
-    function parseAdvertisement(value: unknown, requireImage = false): HomeAdvertisement | null {
-      const parsed = homeAdvertisement.safeParse(value);
-      if (!parsed.success) return null;
-      const advertisement = parsed.data;
-      if (advertisement.endsAt && advertisement.endsAt <= now) return null;
-      if ((requireImage || advertisement.appearance?.mode === "image") && !advertisement.imageUrl) return null;
-      return advertisement;
-    }
-    // ACT: 新接口的空数组表示明确清空；只有旧接口缺少 banners 时才回退单条。
-    if (data.banners !== undefined && !Array.isArray(data.banners)) fail("顶部横幅响应格式不正确", 502);
-    const banners = (Array.isArray(data.banners) ? data.banners : [data.banner])
-      .slice(0, 10).map(item => parseAdvertisement(item)).filter((item): item is HomeAdvertisement => item !== null);
-    const sidebar = Array.isArray(data.sidebar) ? data.sidebar : [data.sidebar];
-    return {
-      banner: banners[0] ?? null,
-      banners,
-      bannerMode: data.bannerMode === "stack" ? "stack" : "carousel",
-      bannerInterval: typeof data.bannerInterval === "number" && Number.isInteger(data.bannerInterval) && data.bannerInterval >= 2 && data.bannerInterval <= 60 ? data.bannerInterval : 5,
-      sidebar: sidebar.slice(0, 10).map(item => parseAdvertisement(item, true)).filter((item): item is HomeAdvertisement => item !== null),
-    };
   }
 }

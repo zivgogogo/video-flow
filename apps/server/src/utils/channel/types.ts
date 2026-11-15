@@ -226,31 +226,6 @@ export type ModelData = {
 };
 
 export type Sponsor = { id: number; name: string; logoUrl: string; readme: string };
-export type HomeAdvertisement = {
-  title: string;
-  content: string;
-  imageUrl: string;
-  buttonText: string;
-  actionType: "web" | "path" | "settings";
-  actionTarget: string;
-  endsAt: number | null;
-  updatedAt: number;
-  appearance?: {
-    mode: "text" | "image";
-    backgroundColor: string;
-    backgroundEndColor?: string;
-    textColor: string;
-    buttonColor: string;
-    buttonTextColor: string;
-  };
-};
-export type HomeAdvertisements = {
-  banner: HomeAdvertisement | null;
-  banners: HomeAdvertisement[];
-  bannerMode: "carousel" | "stack";
-  bannerInterval: number;
-  sidebar: HomeAdvertisement[];
-};
 export type ExploreCategory = { id: string; name: string };
 export type ExploreProject = {
   id: string;
@@ -325,5 +300,4 @@ export interface Channel {
   getExploreUploadSignature(params: ExploreUploadSignatureParams, options: AuthenticatedOptions): Promise<ExploreUploadSignature>;
   uploadExploreProject(params: UploadExploreProjectParams, options: AuthenticatedOptions): Promise<ExploreSubmission>;
   getSponsorList(options?: RequestOptions): Promise<Sponsor[]>;
-  getAdvertisements(options?: RequestOptions): Promise<HomeAdvertisements>;
 }

@@ -90,15 +90,17 @@
             :disabled="generating || deleting || !selectedModel" />
           <el-button v-if="editor?.mode === 'inpaint'" class="confirmButton" type="primary" :icon="IconCheck" :loading="editor.busy" :disabled="deleting || uploading || !generationPrompt" @click="confirmInpaint().catch(error => showNodeError(error, '重绘节点创建失败'))">确认</el-button>
           <div v-else class="generationActions">
-            <mediaPrice v-if="priceInput" :input="{ ...priceInput, mediaType: 'image' }" :supported="selectedModel?.supportsPrice === true" />
-            <el-button v-if="pendingRecovery" class="sendButton" :icon="IconPlayerStop" :loading="cancelling" :disabled="deleting || uploading" title="放弃任务" aria-label="放弃任务" @click="generationState.cancel().catch(error => showNodeError(error, '停止生成失败'))" />
+            <span v-if="generating" class="generationStatus" role="status">正在生成图片…</span>
+            <mediaPrice v-else-if="priceInput" :input="{ ...priceInput, mediaType: 'image' }" :supported="selectedModel?.supportsPrice === true" />
+            <el-button v-if="generating || pendingRecovery" class="sendButton" :icon="IconPlayerStop" :loading="cancelling" :disabled="deleting || uploading" :title="generating ? '停止生成' : '放弃任务'" :aria-label="generating ? '停止生成' : '放弃任务'" @click="generationState.cancel().catch(error => showNodeError(error, '停止生成失败'))" />
             <el-button
               class="sendButton"
-              :icon="generating ? IconPlayerStop : IconArrowUp"
-              :disabled="cancelling || deleting || uploading || (!generating && (editor?.busy || (!pendingRecovery && (!generationPrompt || !selectedModel))))"
-              :title="generating ? '停止生成' : pendingRecovery ? '复查任务' : '生成图片'"
-              :aria-label="generating ? '停止生成' : pendingRecovery ? '复查任务' : '生成图片'"
-              @click="generating ? generationState.cancel().catch(error => showNodeError(error, '停止生成失败')) : startGeneration().catch((error) => showNodeError(error, '图片生成失败'))" />
+              :icon="IconArrowUp"
+              :loading="generating"
+              :disabled="generating || cancelling || deleting || uploading || editor?.busy || (!pendingRecovery && (!generationPrompt || !selectedModel))"
+              :title="generating ? '正在生成图片，请稍候' : pendingRecovery ? '复查任务' : '生成图片'"
+              :aria-label="generating ? '正在生成图片，请稍候' : pendingRecovery ? '复查任务' : '生成图片'"
+              @click="startGeneration().catch((error) => showNodeError(error, '图片生成失败'))" />
           </div>
         </div>
       </el-card>
@@ -573,6 +575,12 @@ nodeTools.register({
       align-items: center;
       gap: 8px;
       margin-left: auto;
+
+      .generationStatus {
+        color: var(--el-text-color-secondary);
+        font-size: 12px;
+        white-space: nowrap;
+      }
 
       .sendButton {
         width: 32px;

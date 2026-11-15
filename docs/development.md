@@ -110,15 +110,9 @@ Windows 桌面日志位于安装目录的 `app/bin/app.log`。桌面 JavaScript 
 
 ### 云端渠道
 
-账号、插件市场、余额统计、探索、首页广告和供应商 TS 的调用链为：页面直接请求本地 `/api/channel/*` → 后端 `Channel` 接口 → `Toonflow` 实现。前端只保留通用 HTTP 工具，不维护渠道抽象。外网地址、响应转换和供应商 TS 临时实现统一放在 `apps/server/src/utils/channel/toonflow.ts`，前后端共享的纯类型通过 `@toonflow/server/channel` 导出。
+账号、插件市场、余额统计、探索和供应商 TS 的调用链为：页面直接请求本地 `/api/channel/*` → 后端 `Channel` 接口 → `Toonflow` 实现。前端只保留通用 HTTP 工具，不维护渠道抽象。外网地址、响应转换和供应商 TS 临时实现统一放在 `apps/server/src/utils/channel/toonflow.ts`，前后端共享的纯类型通过 `@toonflow/server/channel` 导出。
 
-首页广告请求 `GET /api/channel/community/getAdvertisements`，经渠道转发至正式接口 `POST https://api.toonflow.net/web/toonflow/home/getAdvertisements`（`/web` 是部署代理前缀）。配置入口位于 API 管理后台侧栏“首页广告设置”（`/homeAdvertisement`），读取和保存分别使用管理员服务的 `POST /homeAdvertisement/getSettings`、`POST /homeAdvertisement/saveSettings`，图片通过 `POST /homeAdvertisement/getUploadSignature` 获取直传签名。客户端渠道仅公开读取广告，不转发管理员写入接口。服务端过滤停用和到期广告，返回 `banners`、`bannerMode`（`carousel` 轮换或 `stack` 叠加）、`bannerInterval`（2–60 秒，默认 5）及 `sidebar`；旧 `banner` 字段保留首条可见横幅。旧接口缺少 `banners` 时客户端兼容单条配置，明确的空数组不回退。首次部署按 API 管理员服务的迁移文档初始化广告表；构建不会自动执行数据库迁移。
-
-顶部最多配置 10 条横幅，沿用现有广告表的 `banner.items` JSON 保存 `{ items, mode, interval }`，并镜像首条到旧字段；已有单横幅配置自动兼容，无需增加数据库字段。文字横幅最低 44px，正文支持行内 Markdown、回车换行和自动折行，高度随内容撑开；轮换跟随当前条目高度，叠加按顺序显示，每条可独立关闭。后台保存配置后刷新 Toonflow 首页即可读取；正常使用不要添加 `advertisementPreview` 参数。
-
-本地 API 联调可直接请求管理服务 `62487` 和主服务 `62477`；主 API 设置 `ENABLE_BACKGROUND_JOBS=false`，关闭定时任务及视频、图片回调消费。Toonflow 广告读取统一使用正式地址，已移除临时本地接口覆盖，避免开发配置遮蔽线上已保存的广告。
-
-开发环境仍可通过 `/#/home?advertisementPreview=text`、`image`、`web`、`carousel` 或 `stack` 显式查看临时示例；普通首页与生产构建均使用真实接口，接口失败时不回退到示例。
+本地 API 联调可直接请求管理服务 `62487` 和主服务 `62477`；主 API 设置 `ENABLE_BACKGROUND_JOBS=false`，关闭定时任务及视频、图片回调消费。
 
 后端环境变量 `TOONFLOW_CHANNEL` 选择渠道，默认 `toonflow`。新增渠道时，实现 `utils/channel/types.ts` 中的 `Channel`，在 `utils/channel/index.ts` 注册实例，然后设置对应的渠道名称并重启后端；前端和业务路由无需修改。未注册的渠道会明确报错，不会回退到其他渠道。
 

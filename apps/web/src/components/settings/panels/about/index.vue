@@ -11,7 +11,7 @@
       </div>
     </div>
 
-    <el-card v-if="!publicWeb && (isMobile || !isRemoteConnection)" class="infoCard updateCard" shadow="never">
+    <el-card v-if="!publicWeb && (isMobile || isLocalDesktop)" class="infoCard updateCard" shadow="never">
       <div class="cardHeader">
         <div class="updateCopy">
           <div class="cardLabel">
@@ -55,6 +55,49 @@
         <p>请前往 GitHub 最新发布页，选择适合当前系统的完整安装包，关闭客户端后重新安装。</p>
         <el-button tag="a" type="primary" size="small" :href="snapshot.installFailure.downloadUrl" target="_blank" rel="noopener noreferrer">前往下载页</el-button>
       </div>
+    </el-card>
+
+    <el-card v-if="!publicWeb && !actualPlatform.isDesktop && !actualPlatform.isMobile" class="infoCard updateCard" shadow="never">
+      <div class="cardHeader">
+        <div class="updateCopy">
+          <div class="cardLabel">
+            <icon-refresh :size="18" aria-hidden="true" />
+            <span>服务端更新</span>
+          </div>
+        </div>
+        <div class="updateActions">
+          <el-button size="small" type="primary" plain :loading="serverChecking" :disabled="serverApplying || serverUpdate?.supported === false" @click="checkServerUpdate">
+            检查更新
+          </el-button>
+          <el-button v-if="serverUpdate?.updateAvailable" size="small" type="primary" :loading="serverApplying" :disabled="serverApplying" @click="runServerUpdate">
+            更新到最新版
+          </el-button>
+        </div>
+      </div>
+      <div v-if="serverUpdate?.supported === false" class="buildInfo">
+        <span>{{ serverUnsupportedReason }}</span>
+      </div>
+      <template v-else-if="serverUpdate">
+        <div v-if="serverUpdate.current?.shortHash" class="buildInfo">
+          <span>当前版本</span>
+          <code>{{ serverUpdate.current.shortHash }}</code>
+          <span>{{ serverUpdate.current.subject }}</span>
+        </div>
+        <div v-if="serverUpdate.latest?.shortHash" class="buildInfo">
+          <span>最新版本</span>
+          <code>{{ serverUpdate.latest.shortHash }}</code>
+          <span>{{ serverUpdate.latest.subject }}</span>
+        </div>
+        <div v-if="serverApplying" class="buildInfo">
+          <span>正在更新，请稍候…</span>
+        </div>
+        <div v-if="serverUpdate.error" class="installFailureNotice" role="alert">
+          <p>{{ serverUpdate.error }}</p>
+        </div>
+        <div v-if="serverUpdate.restartRequired" class="updateRestartNotice" role="status">
+          更新完成，请重启服务以生效。
+        </div>
+      </template>
     </el-card>
 
     <el-card class="infoCard repositoryCard" shadow="never">
@@ -221,7 +264,7 @@ import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, ref } from 
 import { publicWeb } from "@/stores/multiTenant";
 import axios from "axios";
 import { ElMessage } from "element-plus";
-import { actualPlatform, isMobile, isLocalDesktop, isRemoteConnection } from "@/lib/platform";
+import { actualPlatform, isMobile, isLocalDesktop } from "@/lib/platform";
 import { QRCode } from "tdesign-vue-next";
 import {
   IconRefresh,
@@ -239,6 +282,14 @@ import logoUrl from "@toonflow/assets/logo.svg";
 import type { Sponsor } from "@toonflow/server/channel";
 import http from "@/lib/http";
 import { saveSettings } from "@/stores/settings";
+import {
+  systemUpdateStatus as serverUpdate,
+  systemUpdateApplying as serverApplying,
+  systemUpdateChecking as serverChecking,
+  checkSystemUpdate,
+  applySystemUpdate,
+  readSystemUpdate,
+} from "@/stores/systemUpdate";
 import {
   desktopAutoUpdate,
   desktopUpdateSource as updateSource,
@@ -293,6 +344,10 @@ const resultMessage = computed(() => {
   return snapshot.value.canUpdate ? translate("有新的版本可用，下载完成后可重启更新。") : translate("当前客户端不支持应用内更新，请下载安装包。");
 });
 
+const serverUnsupportedReason = computed(() => serverUpdate.value?.reasonCode === "notLocal"
+  ? translate("请从服务所在机器打开本页面后操作。")
+  : translate("当前部署无法自动更新，请参考部署文档手动更新。"));
+
 const sponsors = ref<Sponsor[]>([]);
 
 onMounted(async () => {
@@ -315,6 +370,10 @@ onMounted(async () => {
   } catch {
     // ACT: 本机版本读取失败不阻塞关于页；远程页面的构建版本不冒充客户端版本。
   }
+});
+onMounted(() => {
+  if (actualPlatform.isDesktop || actualPlatform.isMobile || publicWeb.value) return;
+  void readSystemUpdate();
 });
 onBeforeUnmount(() => controller.abort());
 
@@ -358,6 +417,22 @@ async function saveAutoUpdate(enabled: boolean) {
     ElMessage.error(getUpdateError(error));
   } finally {
     autoUpdateSaving.value = false;
+  }
+}
+
+async function checkServerUpdate() {
+  try {
+    await checkSystemUpdate();
+  } catch (error) {
+    ElMessage.error(getUpdateError(error));
+  }
+}
+
+async function runServerUpdate() {
+  try {
+    await applySystemUpdate();
+  } catch (error) {
+    ElMessage.error(getUpdateError(error));
   }
 }
 
@@ -508,6 +583,16 @@ async function runUpdate(nextAction: "read" | "check" | "download" | "apply") {
       code {
         overflow-wrap: anywhere;
       }
+    }
+
+    .updateRestartNotice {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: var(--ui-radius);
+      background: var(--el-color-success-light-9);
+      color: var(--el-color-success);
+      font-size: 13px;
+      line-height: 1.6;
     }
 
     .installFailureNotice {

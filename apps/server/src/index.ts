@@ -13,6 +13,7 @@ const app = await createApp({
   webRoot: resolve(appDirectory, "build/web"),
   appVersion: config.app.version,
   dataDirectory,
+  appRoot: appDirectory,
   toolsRoot: resolve(appDirectory, "build/tools"),
   nodesRoot: resolve(appDirectory, "build/nodes"),
   extRoot: resolve(appDirectory, "build/ext"),

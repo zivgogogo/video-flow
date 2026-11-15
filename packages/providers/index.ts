@@ -3,6 +3,7 @@
 import deepSeek from "./src/language/deepSeek";
 import bailian from "./src/language/bailian";
 import apiMart from "./src/media/apiMart";
+import mediaBailian from "./src/media/bailian";
 import metaso from "./src/media/metaso";
 import compshare from "./src/media/compshare";
 
@@ -17,4 +18,4 @@ export type AudioConvertOptions = Parameters<ProviderTools["audio"]["convert"]>[
 export type { FfmpegFactory, FfmpegCommand } from "@toonflow/ffmpeg/types";
 
 export const languageProviders = [deepSeek, bailian] as const;
-export const mediaProviders = [apiMart, metaso, compshare] as const;
+export const mediaProviders = [apiMart, metaso, compshare, mediaBailian] as const;

@@ -88,15 +88,17 @@
             :model="selectedModel"
             :disabled="generating || deleting || !selectedModel" />
           <div class="generationActions">
-            <mediaPrice v-if="generationInput" :input="{ ...generationInput, mediaType: 'video' }" :supported="selectedModel?.supportsPrice === true" />
-            <el-button v-if="pendingRecovery" class="sendButton" :icon="IconPlayerStop" :loading="cancelling" :disabled="deleting || uploading" title="放弃任务" aria-label="放弃任务" @click="generationState.cancel().catch(error => showNodeError(error, '停止生成失败'))" />
+            <span v-if="generating" class="generationStatus" role="status">正在生成视频…</span>
+            <mediaPrice v-else-if="generationInput" :input="{ ...generationInput, mediaType: 'video' }" :supported="selectedModel?.supportsPrice === true" />
+            <el-button v-if="generating || pendingRecovery" class="sendButton" :icon="IconPlayerStop" :loading="cancelling" :disabled="deleting || uploading" :title="generating ? '停止生成' : '放弃任务'" :aria-label="generating ? '停止生成' : '放弃任务'" @click="generationState.cancel().catch(error => showNodeError(error, '停止生成失败'))" />
             <el-button
               class="sendButton"
-              :icon="generating ? IconPlayerStop : IconArrowUp"
-              :disabled="cancelling || deleting || uploading || (!generating && !pendingRecovery && (!generationPrompt || !selectedModel))"
-              :title="generating ? '停止生成' : pendingRecovery ? '复查任务' : '生成视频'"
-              :aria-label="generating ? '停止生成' : pendingRecovery ? '复查任务' : '生成视频'"
-              @click="generating ? generationState.cancel().catch(error => showNodeError(error, '停止生成失败')) : startGeneration().catch((error) => showNodeError(error, '视频生成失败'))" />
+              :icon="IconArrowUp"
+              :loading="generating"
+              :disabled="generating || cancelling || deleting || uploading || (!pendingRecovery && (!generationPrompt || !selectedModel))"
+              :title="generating ? '正在生成视频，请稍候' : pendingRecovery ? '复查任务' : '生成视频'"
+              :aria-label="generating ? '正在生成视频，请稍候' : pendingRecovery ? '复查任务' : '生成视频'"
+              @click="startGeneration().catch((error) => showNodeError(error, '视频生成失败'))" />
           </div>
         </div>
       </el-card>
@@ -573,6 +575,12 @@ nodeTools.register({
       align-items: center;
       gap: 8px;
       margin-left: auto;
+
+      .generationStatus {
+        color: var(--el-text-color-secondary);
+        font-size: 12px;
+        white-space: nowrap;
+      }
 
       .sendButton {
         width: 32px;

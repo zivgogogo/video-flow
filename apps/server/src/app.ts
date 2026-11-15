@@ -10,6 +10,7 @@ import { errorFromCause } from "@/lib/responseFormat";
 import desktopRequest from "@/lib/desktop";
 import { getRuntimePlatform } from "@/lib/platform";
 import initializePlugins from "@/utils/plugins/initialize";
+import { setSystemUpdateRoot } from "@/utils/systemUpdate";
 import { languageRequest, setLocaleFallback, translateError, translateMessage } from "@/lib/i18n";
 import { detectLocale, normalizeLocale } from "@toonflow/i18n";
 
@@ -19,6 +20,7 @@ export async function createApp({
   webRoot,
   appVersion = "",
   dataDirectory,
+  appRoot,
   toolsRoot,
   nodesRoot,
   extRoot,
@@ -30,6 +32,7 @@ export async function createApp({
   webRoot: string;
   appVersion?: string;
   dataDirectory?: string;
+  appRoot?: string;
   toolsRoot?: string;
   nodesRoot?: string;
   extRoot?: string;
@@ -40,6 +43,8 @@ export async function createApp({
 }) {
   // conf 由下方的路由动态加载，必须先确定整个进程共用的数据目录。
   if (dataDirectory) process.env.TOONFLOW_DATA_DIR = resolve(dataDirectory);
+  // ACT: 只有独立服务传入源码目录；桌面与移动端不启用源码更新。
+  if (appRoot) setSystemUpdateRoot(appRoot);
   const { default: conf } = await import("@/utils/conf");
   const providerDirectory = resolve(dirname(conf.path), "providers");
   const providerDirectoryInfo = await lstat(providerDirectory).catch((error: NodeJS.ErrnoException) => {

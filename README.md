@@ -18,6 +18,10 @@ video-flow 是面向短剧、漫剧和短视频创作者的开源 AI 创作工�
 
 ## 快速开始
 
+### 使用 Agent 自动安装
+
+将 [Agent 安装与启动指南](./docs/agentInstallation.md) 交给支持终端操作的 AI Agent。文档包含从 `git clone`、环境准备、完整构建到启动验证的命令，以及已有目录、端口占用和远程访问的处理规则。
+
 ### Docker
 
 仓库提供 [Dockerfile](./Dockerfile)、[Compose 配置](./compose.yaml) 和 [构建排除规则](./.dockerignore)，镜像内包含 FFmpeg。
