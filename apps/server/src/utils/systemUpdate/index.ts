@@ -3,6 +3,7 @@ import type { Request } from "express";
 import { stat } from "@toonflow/file";
 import { msg, type MessageDescriptor } from "@toonflow/i18n";
 import { translateMessage } from "@/lib/i18n";
+import { getRuntimePlatform } from "@/lib/platform";
 
 const timeouts = {
   fetch: 120000,
@@ -15,6 +16,7 @@ type CommitInfo = { shortHash: string; date: string; subject: string };
 type ReasonCode = "notLocal" | "notGitRepo" | "notConfigured";
 
 let appRoot: string | undefined;
+let restartApp: (() => Promise<void>) | undefined;
 let currentCommit: CommitInfo | undefined;
 let currentBranch: string | undefined;
 let latestCommit: CommitInfo | undefined;
@@ -27,6 +29,11 @@ let restartRequired = false;
 
 export function setSystemUpdateRoot(directory: string) {
   appRoot = resolve(directory);
+}
+
+// ACT: 桌面宿主注册应用内重启；独立服务保持构建后手动重启提示。
+export function setSystemUpdateRestart(handler: () => Promise<void>) {
+  restartApp = handler;
 }
 
 function fail(message: MessageDescriptor, status: number) {
@@ -155,6 +162,12 @@ export async function applySystemUpdate(req: Request) {
   void (async () => {
     await git(["pull", "--ff-only", "origin", branch], timeouts.pull);
     await run([process.execPath, "install", "--frozen-lockfile"], timeouts.install);
+    if (getRuntimePlatform().desktop) {
+      // ACT: 桌面 dev 的重启脚本会重新执行完整构建，这里不再运行 build:server。
+      if (!restartApp) throw fail(msg`当前桌面客户端不支持自动重启更新。`, 409);
+      await restartApp();
+      return;
+    }
     await run([process.execPath, "run", "build:server"], timeouts.build);
     currentCommit = undefined;
     latestCommit = undefined;

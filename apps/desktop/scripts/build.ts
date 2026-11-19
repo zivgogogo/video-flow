@@ -23,7 +23,11 @@ if (mode === "typecheck") {
 if (!["darwin", "win32", "linux"].includes(process.platform) || !["x64", "arm64"].includes(process.arch)) {
   throw new Error("桌面构建需要 Windows、macOS 或 Linux 的 x64/arm64 环境。");
 }
-if (mode === "dev") process.env.TOONFLOW_DATA_DIR = resolve(projectDir, "data");
+if (mode === "dev") {
+  process.env.TOONFLOW_DATA_DIR = resolve(projectDir, "data");
+  // ACT: 源码 dev 运行才启用关于页的 git 更新；安装版不传入仓库根目录。
+  process.env.TOONFLOW_APP_ROOT = projectDir;
+}
 if (isMac) {
   const startupTarget = process.arch === "x64" ? "macX64" : "macArm64";
   for (const name of ["libthorvg.dylib", "nativeSplash.dylib"]) {

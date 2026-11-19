@@ -29,6 +29,11 @@ export function removeLegacySettings(settings: Record<string, unknown>) {
       changed = true;
     }
   }
+  // ACT: 旧“官方源”指向上游项目的更新服务器，删除后回落到本项目 GitHub 更新源。
+  if (settings.desktopUpdateSource === "official") {
+    delete settings.desktopUpdateSource;
+    changed = true;
+  }
   if (Array.isArray(settings.customProviders)) {
     const providers = settings.customProviders.filter(item => typeof item?.id !== "string" || item.id.toLowerCase() !== "tfrouter");
     if (providers.length !== settings.customProviders.length) {

@@ -7,6 +7,7 @@
     "./multiTenant": "./src/utils/multiTenant/index.ts",
     "./remoteConnection": "./src/remoteConnection.ts",
     "./desktop": "./src/types/desktop.ts",
+    "./systemUpdate": "./src/utils/systemUpdate/index.ts",
     "./pluginDevelopment": "./src/lib/pluginDevelopment.ts",
     "./platform": "./src/lib/platform.ts",
     "./documentFormats": "./src/lib/documentFormats.ts",

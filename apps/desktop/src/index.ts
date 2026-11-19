@@ -157,6 +157,7 @@ async function start() {
       webRoot: resolve(PATHS.VIEWS_FOLDER, "mainview"),
       appVersion: typeof version === "string" ? version : "",
       dataDirectory,
+      appRoot: process.env.TOONFLOW_APP_ROOT,
       toolsRoot: resolve(PATHS.VIEWS_FOLDER, "../tools"),
       nodesRoot: resolve(PATHS.VIEWS_FOLDER, "../nodes"),
       extRoot: resolve(PATHS.VIEWS_FOLDER, "../ext"),
@@ -487,6 +488,23 @@ async function start() {
         },
       },
     } satisfies DesktopRuntime;
+    if (process.env.TOONFLOW_APP_ROOT) {
+      // ACT: 源码 dev 运行的 git 更新重启：等待本进程退出后重新执行 dev:desktop（含完整重建）。
+      // 重建日志写入 data/devRestart.log；重建失败时应用不会重新打开，需查看日志后手动重启。
+      const { setSystemUpdateRestart } = await import("@toonflow/server/systemUpdate");
+      const projectRoot = process.env.TOONFLOW_APP_ROOT;
+      setSystemUpdateRestart(async () => {
+        if (!await confirmQuit()) throw new Error(t`更新重启已取消`);
+        const log = resolve(projectRoot, "data", "devRestart.log");
+        const command = process.platform === "win32"
+          ? ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
+            `Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; Set-Location -LiteralPath '${projectRoot.replace(/'/g, "''")}'; bun run dev:desktop *>> '${log.replace(/'/g, "''")}'`]
+          : ["sh", "-c",
+            `while kill -0 ${process.pid} 2>/dev/null; do sleep 0.5; done; sleep 1; cd '${projectRoot.replace(/'/g, "'\\''")}'; exec bun run dev:desktop >> '${log.replace(/'/g, "'\\''")}' 2>&1`];
+        Bun.spawn(command, { cwd: projectRoot, stdin: "ignore", stdout: "ignore", stderr: "ignore", ...(process.platform === "win32" ? {} : { detached: true }) });
+        quitApproval.run(true, () => Utils.quit());
+      });
+    }
     if (process.platform === "win32") {
       // ACT: Electrobun 2.0.5 的主窗口未加载应用图标，复用构建产物中的应用 ICO。
       const user32 = dlopen("user32.dll", {
