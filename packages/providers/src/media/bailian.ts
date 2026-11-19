@@ -15,7 +15,7 @@ const rules = [
   },
 ] as const;
 
-const version = "1.0.1";
+const version = "1.1.0";
 const videoResolutions = ["480P", "720P", "1080P"];
 
 type ReferencedVideoRequest = VideoRequest & {
@@ -88,12 +88,16 @@ function videoPrompt(request: ReferencedVideoRequest, mode: VideoMode) {
       if (!isFrames || !request[reference.type]) throw new Error(`引用标记 ${marker} 对应的首尾帧未提交`);
       return reference.type === "firstFrame" ? "首帧" : "尾帧";
     }
-    if (reference.type !== "image" || !Number.isSafeInteger(reference.index) || reference.index < 0 || !request.images?.[reference.index]) {
-      throw new Error(`引用标记 ${marker} 对应的参考图片未提交`);
+    if (!("index" in reference)) throw new Error(`引用标记 ${marker} 的素材类型无效`);
+    const media = { image: request.images, video: request.videos, audio: request.audios };
+    const included = Array.isArray(mode) || (mode === "singleImage" && reference.type === "image");
+    if (!included || !Number.isSafeInteger(reference.index) || reference.index < 0 || !media[reference.type]?.[reference.index]) {
+      throw new Error(`引用标记 ${marker} 对应的参考素材未提交`);
     }
-    if (!Array.isArray(mode) && mode !== "singleImage") throw new Error(`引用标记 ${marker} 对应的素材未提交`);
     if (mode === "singleImage" && request.model === "happyhorse-1.1-i2v") return "首帧";
-    return request.model === "happyhorse-1.1-r2v" ? `[Image ${reference.index + 1}]` : `图${reference.index + 1}`;
+    if (request.model === "happyhorse-1.1-r2v") return `[Image ${reference.index + 1}]`;
+    // 百炼全能参考按媒体类型分别编号：图1、视频1、音频1。
+    return `${{ image: "图", video: "视频", audio: "音频" }[reference.type]}${reference.index + 1}`;
   });
 }
 
@@ -136,13 +140,13 @@ async function waitForTask(context: ProviderContext, apiKey: string, baseUrl: st
   }
 }
 
-async function submitTask(context: ProviderContext, apiKey: string, baseUrl: string, mediaType: "image" | "video", model: string, path: string, body: Record<string, unknown>, signal: AbortSignal): Promise<MediaAsset[]> {
+async function submitTask(context: ProviderContext, apiKey: string, baseUrl: string, mediaType: "image" | "video", model: string, path: string, body: Record<string, unknown>, signal: AbortSignal, ossResolve = false): Promise<MediaAsset[]> {
   const baseUrlHash = String(context.tool.hash(baseUrl));
   // ACT: 收费任务提交前先记录不确定状态；响应丢失时只提示人工核查，不自动重复提交。
   await context.saveTaskData?.({ kind: "submitting", mediaType, model, baseUrlHash });
   const response = await context.tool.fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "X-DashScope-Async": "enable" },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "X-DashScope-Async": "enable", ...(ossResolve ? { "X-DashScope-OssResourceResolve": "enable" } : {}) },
     body: JSON.stringify(body),
     signal,
   });
@@ -154,12 +158,45 @@ async function submitTask(context: ProviderContext, apiKey: string, baseUrl: str
   return waitForTask(context, apiKey, baseUrl, mediaType, taskId, signal);
 }
 
+// 参考视频与音频不支持 Base64；本地素材上传到百炼临时存储（48 小时有效）换取 oss:// 地址。
+// ACT: 供应商沙箱没有 FormData，按 OSS PostObject 协议手工拼接 multipart 请求体。
+async function uploadMedia(context: ProviderContext, apiKey: string, baseUrl: string, model: string, input: Exclude<MediaInput, { type: "url" }>, signal: AbortSignal): Promise<string> {
+  const response = await context.tool.fetch(`${baseUrl}/api/v1/uploads?action=getPolicy&model=${encodeURIComponent(model)}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal,
+  });
+  if (!response.ok) throw new Error(`获取百炼上传凭证失败：HTTP ${response.status}`);
+  const policy = object(object(await response.json()).data ?? {});
+  for (const field of ["policy", "signature", "upload_dir", "upload_host", "oss_access_key_id", "x_oss_object_acl", "x_oss_forbid_overwrite"]) {
+    if (typeof policy[field] !== "string" || !policy[field]) throw new Error("百炼上传凭证格式错误");
+  }
+  const bytes = input.type === "binary" ? Buffer.from(input.data) : Buffer.from(input.data.replace(/^data:[^;]+;base64,/, ""), "base64");
+  const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${input.mimeType.split("/")[1]?.replace(/[^a-zA-Z0-9]/g, "") || "bin"}`;
+  const key = `${policy.upload_dir}/${name}`;
+  const boundary = `----toonflow${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  const fields: Record<string, string> = {
+    OSSAccessKeyId: String(policy.oss_access_key_id), Signature: String(policy.signature), policy: String(policy.policy),
+    "x-oss-object-acl": String(policy.x_oss_object_acl), "x-oss-forbid-overwrite": String(policy.x_oss_forbid_overwrite),
+    key, success_action_status: "200",
+  };
+  const parts: Buffer[] = Object.entries(fields).map(([field, value]) => Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${field}"\r\n\r\n${value}\r\n`));
+  parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: ${input.mimeType}\r\n\r\n`), bytes, Buffer.from(`\r\n--${boundary}--\r\n`));
+  const upload = await context.tool.fetch(String(policy.upload_host), {
+    method: "POST",
+    headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+    body: Buffer.concat(parts),
+    signal,
+  });
+  if (!upload.ok) throw new Error(`上传参考素材到百炼失败：HTTP ${upload.status}`);
+  return `oss://${key}`;
+}
+
 export default {
   id: "bailian",
   label: "阿里云百炼",
   icon: "data:image/svg+xml;base64,PHN2ZyBoZWlnaHQ9IjFlbSIgc3R5bGU9ImZsZXg6bm9uZTtsaW5lLWhlaWdodDoxIiB2aWV3Qm94PSIwIDAgMjQgMjQiIHdpZHRoPSIxZW0iIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHRpdGxlPkFsaWJhYmE8L3RpdGxlPjxwYXRoIGQ9Ik0yNCAxNC4wMTRjLTIuOCAxLjUxMi01LjYyIDIuODk2LTguNzU5IDMuNTI0LS43LjEzOS0xLjQ3Ni4xMzktMi4xODcuMDQzLS42NzgtLjA4NS0xLjAxNy0uNjgyLS43NzYtMS4zMS4yMy0uNTg1LjUzNi0xLjE4MS45My0xLjY3MS44NTItMS4wNjUgMS44MTQtMi4wMzQgMi42NzgtMy4wODhhMTUuNzUgMTUuNzUgMCAwMDEuNDIyLTIuMDU0Yy4zMDYtLjUxMS4xNjQtMS4xMjktLjM3Mi0xLjM4NC0uODk3LS40MzctMS44NTktLjc0NS0yLjgxLTEuMDc1LS4xMS0uMDQzLS4yNzQuMDc0LS40OTIuMTQ5LjI3My4yNDQuNDcuNDI1Ljc0My42Ny0yLjgyMS40OC01LjQ5IDEuMTYtOC4wOCAyLjA5OC0uMDEyLjA1My0uMDMzLjA5NS0uMDIzLjExNy4zODMuNTg1LjIwOCAxLjAzMi0uMzUgMS4zOTRhMi4zNjUgMi4zNjUgMCAwMC0uNTY4LjUyMmMxLjcwNi41IDMuMjI2LjIxMyA0LjY4LS43MzUtLjA4Ny0uMTI3LS4xNzUtLjI0NC0uMjYyLS4zNzIuNTQ2LjA5Ni44NzQuMzk0LjkxOC44NjIuMDExLjEwNy0uMDU0LjIxMy0uMDg3LjMyLS4wNzctLjA4Ni0uMTc1LS4xNy0uMjQtLjI2Ny0uMDQ1LS4wNjQtLjA1Ni0uMTM4LS4wODgtLjI0NS0xLjcyOCAxLjE1LTMuNTg3IDEuNDM4LTUuNjMyLjg0MiAwIC40MDQtLjAyMi43NDUuMDExIDEuMDc1LjAyMi4yODctLjA5OC40MTUtLjM2LjU2NC0uNTkxLjM2Mi0xLjIwNC43MzUtMS42OTYgMS4yMTQtLjU5LjU4NS0uMzcxIDEuMjk5LjQyNyAxLjU5Ny45MDcuMzQgMS44NTkuMzUgMi44MS4yMzQgMS4xMjYtLjEzOSAyLjIzLS4zMiAzLjQ1Ni0uNDktMS40MzMuNjctMi44NDQgMS4xNC00LjMzIDEuMzMtMS4wNC4xNC0yLjA3OC4yMTQtMy4xMDYtLjA4NC0xLjQ3Ni0uNDE1LTIuMTMzLTEuNTAxLTEuNzUtMi45Ni4zNjEtMS4zNjMgMS4yMzYtMi40NDkgMi4xNzYtMy40NSAzLjEzOS0zLjMzMiA3LjEwOC01LjAyNCAxMS43LTUuMzY1IDEuMDcyLS4wNzQgMi4xNTUuMDY0IDMuMTYuNTExIDEuNDExLjYzOSAyLjAwMiAxLjk5IDEuMzEzIDMuMzU0LS40NDguOTA1LTEuMDcyIDEuNzM1LTEuNjk1IDIuNTU1LS42MTIuODA5LTEuMzAxIDEuNTU0LTEuOTQ2IDIuMzMxLS4xODYuMjM0LS4zNjEuNDgtLjUwMy43NDUtLjI3NC41LS4wODguODMuNDkyLjc3OCAxLjIxMy0uMTE4IDIuNDUtLjIxMyAzLjYyLS41MTEgMS43MTYtLjQzNyAzLjM4OS0xLjA1NCA1LjA4NC0xLjU5Ny4xNzUtLjA0My4zMzktLjEwNy40OTItLjE3eiIgZmlsbD0iI0ZGNjAwMyIgZmlsbC1ydWxlPSJldmVub2RkIj48L3BhdGg+PC9zdmc+",
   version,
-  readme: `阿里云百炼（DashScope）图片与视频生成。支持 Qwen Image 3.0、HappyHorse 1.1 和 Wan 3.0。
+  readme: `阿里云百炼（DashScope）图片与视频生成。支持 Qwen Image 3.0、HappyHorse 1.1 和 Wan 3.0；Wan 3.0 支持图片、视频、音频全能参考生视频。
 
 请填写与模型同地域的 API Key。默认使用北京地域；国际站可将请求地址改为 \`https://dashscope-intl.aliyuncs.com\`，也可填写业务空间专属域名。
 
@@ -210,7 +247,7 @@ export default {
       id: "wan3.0-video",
       label: "Wan 3.0 视频（标准版）",
       type: "video",
-      mode: ["text", "endFrameOptional", ["imageReference:9"]],
+      mode: ["text", "endFrameOptional", ["imageReference:10", "videoReference:5", "audioReference:5"]],
       audio: "optional",
       durationResolutionMap: [{ duration: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], resolution: ["480P", "720P", "1080P"] }],
     },
@@ -218,7 +255,7 @@ export default {
       id: "wan3.0-video-prime",
       label: "Wan 3.0 视频（优速版）",
       type: "video",
-      mode: ["text", "endFrameOptional", ["imageReference:9"]],
+      mode: ["text", "endFrameOptional", ["imageReference:10", "videoReference:5", "audioReference:5"]],
       audio: "optional",
       durationResolutionMap: [{ duration: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], resolution: ["480P", "720P", "1080P"] }],
     },
@@ -265,18 +302,32 @@ export default {
     if (!apiKey) throw new Error("请填写 API Key");
     const supportedModels = ["happyhorse-1.1-t2v", "happyhorse-1.1-i2v", "happyhorse-1.1-r2v", "wan3.0-video", "wan3.0-video-prime"];
     if (!supportedModels.includes(request.model)) throw new Error("所选百炼视频模型不存在");
-    if (request.videos?.length || request.audios?.length) throw new Error("当前百炼视频适配暂未开放参考视频或音频输入");
     const isWan = request.model.startsWith("wan3.0-");
+    const images = request.images ?? [];
+    const videos = request.videos ?? [];
+    const audios = request.audios ?? [];
+    if (!isWan && (videos.length || audios.length)) throw new Error("HappyHorse 系列不支持参考视频或音频输入");
+    const referenceMode: VideoMode = isWan ? ["imageReference:10", "videoReference:5", "audioReference:5"] : ["imageReference:9"];
     const mode: VideoMode = request.mode ?? (request.firstFrame || request.lastFrame ? "endFrameOptional"
-      : request.images?.length ? request.model === "happyhorse-1.1-i2v" ? "singleImage" : ["imageReference:9"] : "text");
+      : videos.length || audios.length ? referenceMode
+      : images.length ? request.model === "happyhorse-1.1-i2v" ? "singleImage" : referenceMode : "text");
     if (request.model === "happyhorse-1.1-t2v" && mode !== "text") throw new Error("HappyHorse 文生视频不支持参考素材");
     if (request.model === "happyhorse-1.1-i2v" && mode !== "singleImage") throw new Error("HappyHorse 首帧生视频需要 1 张首帧图片");
     if (request.model === "happyhorse-1.1-r2v" && !Array.isArray(mode)) throw new Error("HappyHorse 参考生视频需要参考图片");
     const isFrames = mode === "startEndRequired" || mode === "endFrameOptional" || mode === "startFrameOptional";
-    const images = request.images ?? [];
+    const prompt = videoPrompt(request, mode);
+    const baseUrl = getBaseUrl(this.config.baseUrl);
+    const signal = requestSignal(this, 30 * 60_000);
     const media: { type: string; url: string }[] = [];
+    let ossUsed = false;
+    const referenceUrl = async (input: MediaInput) => {
+      if (input.type === "url") return input.url;
+      ossUsed = true;
+      return uploadMedia(this, apiKey, baseUrl, request.model, input, signal);
+    };
     if (isFrames) {
       if (!isWan) throw new Error("当前模型不支持首尾帧模式");
+      if (videos.length || audios.length) throw new Error("首尾帧模式不支持参考视频或音频，请改用全能参考模式");
       if (mode === "startEndRequired" && (!request.firstFrame || !request.lastFrame)) throw new Error("首尾帧模式需要 2 张图片");
       if (mode === "endFrameOptional" && !request.firstFrame) throw new Error("首帧模式需要首帧图片");
       if (mode === "startFrameOptional" && !request.lastFrame) throw new Error("尾帧模式需要尾帧图片");
@@ -286,30 +337,34 @@ export default {
       if (images.length !== 1) throw new Error("HappyHorse 首帧生视频需要且只需要 1 张首帧图片");
       media.push({ type: "first_frame", url: mediaUrl(images[0]!) });
     } else if (Array.isArray(mode) || mode === "singleImage") {
-      if (!images.length || images.length > 9) throw new Error("参考图生视频支持 1 至 9 张参考图片");
+      const maxImages = isWan ? 10 : 9;
+      if (!images.length && !videos.length && !audios.length) throw new Error("参考生视频至少需要 1 个参考素材");
+      if (images.length > maxImages) throw new Error(`当前模型最多支持 ${maxImages} 张参考图片`);
+      if (videos.length > 5 || audios.length > 5) throw new Error("参考视频和参考音频各最多支持 5 段");
       images.forEach(image => media.push({ type: "reference_image", url: mediaUrl(image) }));
+      for (const video of videos) media.push({ type: "reference_video", url: await referenceUrl(video) });
+      for (const audio of audios) media.push({ type: "reference_audio", url: await referenceUrl(audio) });
     } else if (mode !== "text") {
       throw new Error("当前百炼视频生成模式无效");
     }
-    if (mode === "text" && (images.length || request.firstFrame || request.lastFrame)) throw new Error("文生视频模式不能携带参考素材");
+    if (mode === "text" && (images.length || videos.length || audios.length || request.firstFrame || request.lastFrame)) throw new Error("文生视频模式不能携带参考素材");
     const duration = request.duration ?? 5;
     const minDuration = isWan ? 2 : 3;
     const maxDuration = isWan ? 30 : 15;
+    // ACT: 有参考视频时输入与输出总时长不超过 30 秒，由百炼服务端校验并返回错误。
     if (!Number.isInteger(duration) || duration < minDuration || duration > maxDuration) throw new Error(`当前模型视频时长须为 ${minDuration} 至 ${maxDuration} 秒的整数`);
     const resolution = (request.resolution ?? "720P").toUpperCase();
     if (!videoResolutions.includes(resolution)) throw new Error("当前模型仅支持 480P、720P、1080P");
-    const baseUrl = getBaseUrl(this.config.baseUrl);
-    const signal = requestSignal(this, 30 * 60_000);
     return submitTask(this, apiKey, baseUrl, "video", request.model, "/api/v1/services/aigc/video-generation/video-synthesis", {
       model: request.model,
-      input: { prompt: videoPrompt(request, mode), ...(media.length ? { media } : {}) },
+      input: { prompt, ...(media.length ? { media } : {}) },
       parameters: {
         resolution,
         ratio: request.ratio ?? "16:9",
         duration,
         ...(isWan ? { audio: request.generateAudio ?? true } : {}),
       },
-    }, signal);
+    }, signal, ossUsed);
   },
   async resumeTask(data: ProviderTaskData): Promise<MediaAsset[]> {
     if (data.kind === "submitting") throw new Error("上次提交结果未知，不能自动重新提交，请先在百炼控制台确认任务");
